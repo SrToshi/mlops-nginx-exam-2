@@ -1,139 +1,16 @@
-## Instructions pour l'Examen / Exam Instructions
+## Exam Development Notes
 
-<details>
-<summary>🇫🇷 Version Française</summary>
+- **Fixed Docker network subnet**: The `/nginx_status` endpoint restricts access via the `allow` directive in `nginx.conf`, which requires knowing the Docker network's subnet. Since subnet assignment is dynamic by default (and would differ across machines), the subnet was pinned explicitly in `docker-compose.yml` via `networks.default.ipam.config`, ensuring the same `allow 172.28.0.0/16` rule works reproducibly regardless of the host running the project.
 
-### Examen MLOps : Déploiement Avancé avec Nginx 🚀
+- **`SSL_VERIFY: "false"` on `nginx_exporter`**: Since Nginx serves `/nginx_status` exclusively over HTTPS with a self-signed certificate, `nginx_exporter` cannot validate the certificate chain by default. Rather than exposing `/nginx_status` over plain HTTP (which would weaken the all-HTTPS design), the exporter's own SSL verification was disabled via its `SSL_VERIFY` environment variable — the connection remains encrypted end-to-end, only certificate authority validation is skipped, consistent with how `--cacert` is used for the same self-signed certificate in `tests/run_tests.sh`.
 
-#### Contexte
+- **`src/api/requirements.txt` was empty**: populated with the same dependency set used for the FastAPI + scikit-learn stack in earlier coursework (`fastapi`, `uvicorn`, `joblib`, `numpy`, `scikit-learn`), since neither `main.py` version imports `uvicorn` directly — it's only invoked via the Dockerfile's `CMD`.
 
-Pour cet examen, vous allez mettre en œuvre une architecture MLOps robuste et sécurisée. Le cœur du projet est d'utiliser Nginx comme une API Gateway pour servir un modèle de Machine Learning via une API FastAPI. Vous devrez non seulement rendre le service fonctionnel, mais aussi implémenter des fonctionnalités avancées essentielles en production : scalabilité, sécurité, et stratégies de déploiement modernes.
+- **Self-signed certificates are committed to this repo** (`deployments/nginx/certs/`), including the private key. This is acceptable only for this test nginx exercise so `make start-project` works out of the box for grading; in a real production repository, private keys should never be committed and would instead be managed via a secrets manager or generated at deploy time.
 
-#### Objectifs du Projet
+- **Build context for `api-v1`/`api-v2`/`nginx` is the repository root** (not their respective subfolders), since each Dockerfile needs to reach files outside its own directory (`model/model.joblib`, shared `src/api/requirements.txt`, or `deployments/nginx/.htpasswd` and `certs/`) — Docker's build context cannot traverse upward with `../`.
 
-Votre mission est de configurer une architecture conteneurisée complète qui remplit les objectifs suivants :
-
-1.  **Proxy Inverse (Reverse Proxy)** : Nginx doit agir comme le seul point d'entrée et router le trafic vers les services API appropriés.
-
-2.  **Équilibrage de Charge (Load Balancing)** : L'API principale (`api-v1`) doit être déployée en plusieurs instances (3 répliques) pour garantir la haute disponibilité et la répartition de la charge.
-
-3.  **Sécurité HTTPS** : Toutes les communications externes doivent être chiffrées via HTTPS. Vous générerez des certificats auto-signés pour cela. Le trafic HTTP simple devra être automatiquement redirigé vers HTTPS.
-
-4.  **Contrôle d'Accès** : L'accès au point de terminaison de prédiction (`/predict`) doit être protégé par une authentification basique (nom d'utilisateur / mot de passe).
-
-5.  **Limitation de Débit (Rate Limiting)** : Pour protéger l'API contre les surcharges, l'endpoint `/predict` doit limiter le nombre de requêtes (ex: 10 requêtes/seconde par IP).
-
-6.  **A/B Testing** : Vous déploierez deux versions de l'API.
-    *   `api-v1` : La version standard.
-    *   `api-v2` : Une version "debug" qui retourne des informations supplémentaires.
-    *   Nginx devra router le trafic vers `api-v2` **uniquement si** la requête contient l'en-tête HTTP `X-Experiment-Group: debug`. Sinon, le trafic doit aller vers `api-v1`.
-
-7.  **Monitoring (Bonus)** : Mettre en place une stack de monitoring avec Prometheus et Grafana pour collecter et visualiser les métriques de Nginx.
-
-#### Architecture Cible
-
-Le schéma suivant illustre l'architecture complète que vous devez construire. Nginx sert de passerelle centrale, gérant le trafic vers les différentes versions de l'API et exposant les métriques pour le monitoring.
-
-```mermaid
-graph TD
-    subgraph "Utilisateur"
-        U[Client] -->|Requête HTTPS| N
-    end
-
-    subgraph "Infrastructure Conteneurisée (Docker)"
-        N[Nginx Gateway] -->|Load Balancing| V1
-        N -->|"A/B Test (Header)"| V2
-
-        subgraph "API v1 (Scalée)"
-            V1[Upstream: api-v1]
-            V1_1[Replica 1]
-            V1_2[Replica 2]
-            V1_3[Replica 3]
-            V1 --- V1_1
-            V1 --- V1_2
-            V1 --- V1_3
-        end
-
-        subgraph "API v2 (Debug)"
-            V2[Upstream: api-v2]
-        end
-
-        subgraph "Stack de Monitoring"
-            N -->|/nginx_status| NE[Nginx Exporter]
-            NE -->|Métriques| P[Prometheus]
-            P -->|Source de données| G[Grafana]
-            U_Grafana[Admin] -->|Consulte Dashboards| G
-        end
-    end
-
-    style N fill:#269539,stroke:#333,stroke-width:2px,color:#fff
-    style G fill:#F46800,stroke:#333,stroke-width:2px,color:#fff
-    style P fill:#E6522C,stroke:#333,stroke-width:2px,color:#fff
-```
-
-#### Structure Cible du Projet
-
-Voici l'arborescence de fichiers que vous devez obtenir à la fin :
-
-```sh
-. 
-├── Makefile
-├── README.md
-├── README_student.md
-├── data
-│   └── tweet_emotions.csv
-├── deployments
-│   ├── nginx
-│   │   ├── Dockerfile
-│   │   ├── certs
-│   │   │   ├── nginx.crt
-│   │   │   └── nginx.key
-│   │   └── nginx.conf
-│   └── prometheus
-│       └── prometheus.yml
-├── docker-compose.yml
-├── model
-│   └── model.joblib
-├── src
-│   ├── api
-│   │   ├── requirements.txt
-│   │   ├── v1
-│   │   │   ├── Dockerfile
-│   │   │   └── main.py
-│   │   └── v2
-│   │       ├── Dockerfile
-│   │       └── main.py
-│   └── gen_model.py
-└── tests
-    └── run_tests.sh
-```
-
-#### Livrables
-
-Vous devez soumettre une archive `.zip` ou `.tar.gz` contenant l'intégralité de votre projet, incluant :
-
--   **Tous les `Dockerfiles`** nécessaires pour construire les images de vos services.
--   Le fichier **`docker-compose.yml`** orchestrant tous les services (Nginx, api-v1, api-v2, monitoring).
--   Le fichier **`nginx.conf`** complet avec toutes les directives requises.
--   Les fichiers de configuration et de sécurité (`.htpasswd`, certificats SSL, `prometheus.yml`).
--   Le code source des deux versions de l'API.
--   Un **`Makefile`** avec des commandes claires pour `start-project`, `stop-project`, et `test`.
--   Un script de test (`tests/run_tests.sh`) qui valide automatiquement les fonctionnalités clés.
-
-#### Critères d'Évaluation
-
-**Important :** La validation finale de votre projet se fera en exécutant la commande `make test`. Celle-ci doit s'exécuter sans erreur et tous les tests doivent passer avec succès.
-
--   **Fonctionnalité** : Toutes les fonctionnalités (de 1 à 6) sont implémentées et fonctionnent correctement.
--   **Qualité du Code** : Les fichiers de configuration (`nginx.conf`, `docker-compose.yml`) sont clairs, commentés si nécessaire, et bien structurés.
--   **Reproductibilité** : Le projet peut être lancé sans erreur avec `make start-project`.
--   **Automatisation** : Le `Makefile` et le script de test sont efficaces et permettent de valider le projet facilement.
--   **Clarté de la Documentation** : Le `README.md` principal explique clairement l'architecture et l'utilisation du projet.
-
-Bon courage ! 🚀
-
-</details>
-
+## / Exam Instructions
 <details>
 <summary>🇬🇧 English Version</summary>
 
