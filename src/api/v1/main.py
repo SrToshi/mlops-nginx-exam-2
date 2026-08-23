@@ -8,7 +8,7 @@ from pydantic import BaseModel
 
 MODEL_PATH = os.path.join(os.path.dirname(__file__), 'model.joblib')
 
-# Chargement du modèle entraîné
+# We load the trained from the model.joblib file. If the file is not found, we raise a RuntimeError.
 try:
     model = joblib.load(MODEL_PATH)
 except FileNotFoundError:
@@ -22,7 +22,7 @@ app = FastAPI(
     version="1.6.42",
 )
 
-# modèle de données pour la requête d'entrée
+# data model for the request body
 class Sentence(BaseModel):
     sentence: str
 
@@ -36,7 +36,7 @@ class Sentence(BaseModel):
         }
     }
 
-# endpoint de prédiction
+# Predict endpoint
 @app.post("/predict")
 def predict(features: Sentence):
     try:
