@@ -10,6 +10,12 @@
 
 - **Build context for `api-v1`/`api-v2`/`nginx` is the repository root** (not their respective subfolders), since each Dockerfile needs to reach files outside its own directory (`model/model.joblib`, shared `src/api/requirements.txt`, or `deployments/nginx/.htpasswd` and `certs/`) — Docker's build context cannot traverse upward with `../`.
 
+## Bonus: Monitoring in Action
+
+Prometheus datasource connected in Grafana and dashboard (ID `12708`) imported, showing real Nginx metrics collected via `nginx_exporter` after generating test traffic through `/predict`.
+
+![Grafana dashboard with Nginx metrics](docs/screenshots/grafana_screenshot.png)
+
 ## / Exam Instructions
 <details>
 <summary>🇬🇧 English Version</summary>
